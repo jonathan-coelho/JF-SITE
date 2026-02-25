@@ -682,7 +682,21 @@
   /* =====================================================
      CONFIG — substitua pela URL do seu Apps Script
   ===================================================== */
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwb_pb7tLCNJu-Su9JevDHHMC1w0KHFkHcQUVTZiUFJhe_LFxnCslsYfPRiVTeVGuhh/exec";
+  /* =====================================================
+     CONFIG — substitua pela URL do seu Apps Script
+  =====================================================
+     ⚠️  BACKEND: o Apps Script precisa tratar GET com:
+       e.parameter.action === "publicUpdateRequest"
+       e.parameter.id     → ID do pedido
+       e.parameter.status → "done"
+     Retornar: ContentService.createTextOutput(
+       e.parameter.callback + "({ ok: true })")
+     Exemplo no doGet do Apps Script:
+       case "publicUpdateRequest":
+         updateRequestStatus(e.parameter.id, e.parameter.status);
+         return jsonpResponse(e.parameter.callback, { ok: true });
+  ===================================================== */
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzVD4E76mNpXfhSoeRH3foybe8d90yeWCskLBWMDRumtVgMCTOxzmQzzmxpMtoZMuU/exec";
 
   /* =====================================================
      CONSTANTES
@@ -882,7 +896,7 @@
     }
 
     filteredReq.forEach(r => {
-      const tagClass = r.status === "open" ? "open" : "done";
+      const tagClass = r.status === "open" ? "open" : "done"; // closed also maps to "done" CSS class
       const addrLine = [r.address, r.neighborhood].filter(Boolean).join(" — ") || "Localização informada";
       const div = document.createElement("div");
       div.className = "item";
@@ -991,23 +1005,56 @@
   function markDoneButton(r) {
     if (r.status !== "open")
       return `<span class="pill" style="opacity:.6;cursor:default">✅ Atendido</span>`;
-    return `<button class="pill" onclick="markRequestDone('${escapeHtml(r.id)}')">✅ Marcar atendido</button>`;
+    // data-id evita qualquer corrupção de caracteres especiais no onclick inline
+    return `<button class="pill mark-done-btn" data-id="${escapeHtml(r.id)}">✅ Marcar atendido</button>`;
   }
+
+  // Delegação: captura cliques em qualquer .mark-done-btn
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".mark-done-btn");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (id) markRequestDone(id);
+  });
 
   function markRequestDone(id) {
     if (!confirm("Confirmar: este pedido já foi atendido?")) return;
-    const f = document.createElement("form");
-    f.method = "POST"; f.target = "hidden_iframe"; f.action = WEB_APP_URL;
-    f.style.display = "none";
-    [["action","publicUpdateRequest"],["id",id],["status","done"]].forEach(([name,value]) => {
-      const inp = document.createElement("input");
-      inp.name = name; inp.value = value;
-      f.appendChild(inp);
-    });
-    document.body.appendChild(f);
-    f.submit();
-    setTimeout(() => f.remove(), 500);
+
+    // Optimistic UI: atualiza localmente antes da resposta do servidor
+    const req = requests.find(x => String(x.id) === String(id));
+    if (req) { req.status = "closed"; renderAll(); }
+
+    const cb = "cb_markdone_" + Math.random().toString(36).slice(2);
+    const s  = document.createElement("script");
+
+    window[cb] = (data) => {
+      delete window[cb];
+      s.remove();
+      if (!data || !data.ok) {
+        if (req) { req.status = "open"; renderAll(); }
+        const motivo = (data && data.error) ? data.error : "resposta inesperada do servidor";
+        alert("Não foi possível marcar como atendido.\nMotivo: " + motivo);
+      } else {
+        setTimeout(() => refreshAll(), 800);
+      }
+    };
+
+    s.onerror = () => {
+      delete window[cb];
+      s.remove();
+      if (req) { req.status = "open"; renderAll(); }
+      alert("Erro de rede ao marcar como atendido.\nVerifique se o Apps Script está publicado.");
+    };
+
+    s.src = WEB_APP_URL
+      + "?action=publicUpdateRequest"
+      + "&id="       + encodeURIComponent(id)
+      + "&status=done"
+      + "&callback=" + encodeURIComponent(cb);
+
+    document.body.appendChild(s);
   }
+
 
   /* =====================================================
      FETCH
