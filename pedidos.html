@@ -1360,8 +1360,13 @@
       e.preventDefault();
       const msgEl = $("#reqMsg");
       const btnEl = $("#btnSendReq");
+
+      // Evita duplo envio: se já está enviando, ignora
+      if (btnEl.dataset.sending === "1") return;
+
       msgEl.textContent = "Localizando endereço...";
       btnEl.disabled = true;
+      btnEl.dataset.sending = "1";
 
       try {
         const f = $("#formRequest");
@@ -1372,19 +1377,24 @@
 
         f.phone.value = digits;
 
-        const coords = await geocodeAddress(f.address.value.trim());
-        $("#req_lat").value = round3(coords.lat);
-        $("#req_lng").value = round3(coords.lng);
-        $("#req_precision").value = "geocoded";
+        // Geocodifica apenas se ainda não tem coordenadas (GPS ou anterior)
+        if (!$("#req_lat").value) {
+          const coords = await geocodeAddress(f.address.value.trim());
+          $("#req_lat").value = round3(coords.lat);
+          $("#req_lng").value = round3(coords.lng);
+          $("#req_precision").value = "geocoded";
+        }
 
         lastSubmitted = "request";
         msgEl.textContent = "Enviando...";
         f.submit();
+        // NÃO reabilita aqui — só reabilita no iframe onload (pós-confirmação)
       } catch (err) {
         msgEl.textContent = err.message || "Erro ao enviar.";
         setTimeout(() => { msgEl.textContent = ""; }, 5000);
-      } finally {
+        // Só reabilita em caso de ERRO (envio não aconteceu)
         btnEl.disabled = false;
+        btnEl.dataset.sending = "0";
       }
     });
 
@@ -1393,8 +1403,12 @@
       e.preventDefault();
       const msgEl = $("#ptMsg");
       const btnEl = $("#btnSendPt");
+
+      if (btnEl.dataset.sending === "1") return;
+
       msgEl.textContent = "Localizando endereço...";
       btnEl.disabled = true;
+      btnEl.dataset.sending = "1";
 
       try {
         const f = $("#formPoint");
@@ -1410,8 +1424,8 @@
       } catch (err) {
         msgEl.textContent = err.message || "Erro ao enviar.";
         setTimeout(() => { msgEl.textContent = ""; }, 5000);
-      } finally {
         btnEl.disabled = false;
+        btnEl.dataset.sending = "0";
       }
     });
 
@@ -1420,7 +1434,7 @@
       if (lastSubmitted === "request") {
         $("#reqMsg").textContent = "Enviado ✅ (atualizando...)";
         setTimeout(() => { $("#reqMsg").textContent = ""; }, 4500);
-        // reset form
+        // reset form completo
         selectedNeeds.clear();
         [...$("#needsChips").children].forEach(c => c.classList.remove("on"));
         $("#needsValue").value = "";
@@ -1428,20 +1442,28 @@
         $("#req_lng").value = "";
         $("#req_precision").value = "manual";
         $("#req_id").value = uid();
-        // reset checkbox de geolocalização
         const geoChk = $("#useGeoAddress");
         if (geoChk) geoChk.checked = false;
         const geoStatus = $("#geoAddrStatus");
         if (geoStatus) geoStatus.textContent = "";
         const addrInput = $("#req_address");
         if (addrInput) { addrInput.readOnly = false; addrInput.value = ""; }
+        // Reabilita botão APÓS confirmação do servidor
+        const btn = $("#btnSendReq");
+        btn.disabled = false;
+        btn.dataset.sending = "0";
       } else if (lastSubmitted === "point") {
         $("#ptMsg").textContent = "Enviado ✅ (atualizando...)";
         setTimeout(() => { $("#ptMsg").textContent = ""; }, 4500);
         $("#pt_id").value = uid();
+        const btn = $("#btnSendPt");
+        btn.disabled = false;
+        btn.dataset.sending = "0";
       }
       lastSubmitted = null;
-      setTimeout(() => refreshAll(), 700);
+      // Invalida cache e força busca na rede
+      sessionStorage.removeItem("ajudajf_requests");
+      setTimeout(() => refreshAll(false, true), 700);
     });
   }
 
